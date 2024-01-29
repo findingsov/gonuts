@@ -154,7 +154,6 @@ func mintTokens(paymentRequest string) error {
 		return errors.New("invoice has not been paid")
 	}
 
-
 	activeKeyset := nutw.GetActiveSatKeyset()
 	blindedMessages, secrets, rs, err := cashu.CreateBlindedMessages(invoice.Amount, activeKeyset)
 	if err != nil {

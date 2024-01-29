@@ -18,7 +18,6 @@ import (
 	"github.com/elnosh/gonuts/cashu/nuts/nut03"
 	"github.com/elnosh/gonuts/cashu/nuts/nut04"
 	"github.com/elnosh/gonuts/cashu/nuts/nut05"
-	"github.com/elnosh/gonuts/config"
 	"github.com/elnosh/gonuts/crypto"
 	"github.com/gorilla/mux"
 )
@@ -34,8 +33,8 @@ func StartMintServer(server *MintServer) {
 	log.Fatal(server.httpServer.ListenAndServe())
 }
 
-func SetupMintServer(config config.Config) (*MintServer, error) {
-	mint, err := LoadMint(config)
+func SetupMintServer() (*MintServer, error) {
+	mint, err := LoadMint()
 	if err != nil {
 		return nil, err
 	}

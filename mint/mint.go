@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,6 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/elnosh/gonuts/cashu"
 	"github.com/elnosh/gonuts/cashu/nuts/nut04"
-	"github.com/elnosh/gonuts/config"
 	"github.com/elnosh/gonuts/crypto"
 	"github.com/elnosh/gonuts/mint/lightning"
 	bolt "go.etcd.io/bbolt"
@@ -36,47 +36,74 @@ type Mint struct {
 	LightningClient lightning.Client
 }
 
-func LoadMint(config config.Config) (*Mint, error) {
+func LoadMint() (*Mint, error) {
 	path := setMintDBPath()
 	db, err := bolt.Open(filepath.Join(path, "mint.db"), 0600, nil)
 	if err != nil {
 		log.Fatalf("error starting mint: %v", err)
 	}
 
-	activeKeyset := crypto.GenerateKeyset(config.PrivateKey, config.DerivationPath)
-	mint := &Mint{db: db, ActiveKeysets: map[string]crypto.Keyset{activeKeyset.Id: *activeKeyset}}
+	mint := &Mint{db: db, ActiveKeysets: map[string]crypto.Keyset{}}
 	err = mint.initMintBuckets()
 	if err != nil {
 		return nil, fmt.Errorf("error setting up db: %v", err)
 	}
 
-	mint.SaveKeyset(*activeKeyset)
 	mint.Keysets = mint.GetKeysets()
 	mint.LightningClient = lightning.NewLightningClient()
-
-	isKeysetNew := true
-	for i, keyset := range mint.Keysets {
-		if keyset.Id != activeKeyset.Id {
-			keyset.Active = false
-			err := mint.SaveKeyset(keyset)
-			if err != nil {
-				return nil, fmt.Errorf("error saving keyset: %v", err)
-			}
-			mint.Keysets[i] = keyset
-		} else if keyset.Id == activeKeyset.Id {
-			isKeysetNew = false
-		}
-	}
-
-	if isKeysetNew {
-		err = mint.SaveKeyset(*activeKeyset)
-		if err != nil {
-			return nil, fmt.Errorf("error saving active keyset: %v", err)
-		}
-		mint.Keysets[activeKeyset.Id] = *activeKeyset
-	}
+	mint.setupActiveKeysets()
 
 	return mint, nil
+}
+
+func (m *Mint) setupActiveKeysets() {
+	var activeKeysets []crypto.Keyset
+	// if derivation path env var is set, add single keyset
+	// if derivation path list is set, loop through list and add each keyset
+	pk := os.Getenv("MINT_PRIVATE_KEY")
+	dp := os.Getenv("MINT_DERIVATION_PATH")
+	dpl := os.Getenv("MINT_DERIVATION_PATH_LIST")
+	if dp != "" {
+		keyset := crypto.GenerateKeyset(pk, dp)
+		activeKeysets = append(activeKeysets, *keyset)
+	} else if dpl != "" {
+		var pathList []string
+		err := json.Unmarshal([]byte(dpl), &pathList)
+		if err != nil {
+			log.Fatalf("error reading derivation path list from environment: %v\n", err)
+		}
+
+		for _, path := range pathList {
+			keyset := crypto.GenerateKeyset(pk, path)
+			activeKeysets = append(activeKeysets, *keyset)
+		}
+	}
+	m.addActiveKeysets(activeKeysets)
+}
+
+// add list of active keysets passed to db
+// and change status of old keysets to inactive
+func (m *Mint) addActiveKeysets(activeKeysets []crypto.Keyset) {
+	for _, keyset := range activeKeysets {
+		m.ActiveKeysets[keyset.Id] = keyset
+		m.Keysets[keyset.Id] = keyset
+		m.SaveKeyset(keyset)
+	}
+
+	for _, keyset := range m.Keysets {
+		isInactive := true
+		for _, activeKeyset := range activeKeysets {
+			if activeKeyset.Id == keyset.Id {
+				isInactive = false
+			}
+		}
+
+		if isInactive {
+			keyset.Active = false
+			m.SaveKeyset(keyset)
+			m.Keysets[keyset.Id] = keyset
+		}
+	}
 }
 
 func setMintDBPath() string {

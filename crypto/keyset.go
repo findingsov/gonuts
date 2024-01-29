@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 )
@@ -32,6 +33,7 @@ type KeyPair struct {
 func GenerateKeyset(seed, derivationPath string) *Keyset {
 	keyPairs := make([]KeyPair, maxOrder)
 
+	unit := deriveUnit(derivationPath)
 	for i := 0; i < maxOrder; i++ {
 		amount := uint64(math.Pow(2, float64(i)))
 		hash := sha256.Sum256([]byte(seed + derivationPath + strconv.FormatUint(amount, 10)))
@@ -39,7 +41,19 @@ func GenerateKeyset(seed, derivationPath string) *Keyset {
 		keyPairs[i] = KeyPair{Amount: amount, PrivateKey: privKey.Serialize(), PublicKey: pubKey.SerializeCompressed()}
 	}
 	keysetId := DeriveKeysetId(keyPairs)
-	return &Keyset{Id: keysetId, Unit: "sat", Active: true, KeyPairs: keyPairs}
+	return &Keyset{Id: keysetId, Unit: unit, Active: true, KeyPairs: keyPairs}
+}
+
+// parses derivation path and derives the unit
+// m/0'/0'/0' is "sat" (default)
+// m/0'/1'/0' is "usd"
+func deriveUnit(derivationPath string) string {
+	unit := "sat"
+	parts := strings.Split(derivationPath, "/")
+	if parts[2] == "1'" {
+		unit = "usd"
+	}
+	return unit
 }
 
 func DeriveKeysetId(keys []KeyPair) string {
