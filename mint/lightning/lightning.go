@@ -18,6 +18,9 @@ type Client interface {
 
 func NewLightningClient() Client {
 	backend := os.Getenv("LIGHTNING_BACKEND")
+	if len(backend) == 0 {
+		log.Fatal("please specify a lightning backend")
+	}
 
 	switch backend {
 	case LND:
@@ -28,7 +31,7 @@ func NewLightningClient() Client {
 		return lndClient
 
 	default:
-		log.Fatal("please specify a lignting backend")
+		log.Fatal("lightning backend not supported")
 	}
 
 	return nil

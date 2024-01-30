@@ -75,6 +75,18 @@ func (m *Mint) setupActiveKeysets() {
 
 		for _, path := range pathList {
 			keyset := crypto.GenerateKeyset(pk, path)
+			// check if keyset unit is usd. If it is, check FIAT_BACKEND env var
+			// only FAKE_BACKEND
+			if keyset.Unit == "usd" {
+				fiatBackend := os.Getenv("FIAT_BACKEND")
+				if len(fiatBackend) == 0 {
+					log.Fatal("Error - keyset for 'usd' unit specified and no backend specified. Please specify FIAT_BACKEND env.")
+				} else {
+					if fiatBackend != "FakeBackend" {
+						log.Fatal("fiat backend not supported")
+					}
+				}
+			}
 			activeKeysets = append(activeKeysets, *keyset)
 		}
 	}
@@ -135,7 +147,7 @@ func (m *Mint) RequestMintQuote(method string, amount uint64, unit string) (nut0
 	if method != "bolt11" {
 		return nut04.PostMintQuoteBolt11Response{}, cashu.PaymentMethodNotSupportedErr
 	}
-	if unit != "sat" {
+	if unit != "sat" && unit != "usd" {
 		return nut04.PostMintQuoteBolt11Response{}, cashu.UnitNotSupportedErr
 	}
 
@@ -189,6 +201,17 @@ func (m *Mint) MintTokens(method, id string, blindedMessages cashu.BlindedMessag
 	invoice := m.GetInvoice(id)
 	if invoice == nil {
 		return nil, cashu.InvoiceNotExistErr
+	}
+
+	keysetIdRequested := blindedMessages[0].Id
+	keyset, ok := m.ActiveKeysets[keysetIdRequested]
+	// sign everything with usd unit
+	if ok && keyset.Unit == "usd" {
+		blindedSignatures, err := m.signBlindedMessages(blindedMessages)
+		if err != nil {
+			return nil, cashu.BuildCashuError(err.Error(), cashu.StandardErrCode)
+		}
+		return blindedSignatures, nil
 	}
 
 	var blindedSignatures cashu.BlindedSignatures

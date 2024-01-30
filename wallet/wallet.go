@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,10 +25,6 @@ import (
 	"github.com/elnosh/gonuts/wallet/storage"
 )
 
-const (
-	MINT_URL = "MINT_URL"
-)
-
 type Wallet struct {
 	db storage.DB
 
@@ -39,7 +36,8 @@ type Wallet struct {
 	// list of inactive keysets (if any) from current mint
 	InactiveKeysets []crypto.Keyset
 
-	proofs cashu.Proofs
+	proofs     cashu.Proofs
+	WalletUnit string
 }
 
 func setWalletPath() string {
@@ -68,14 +66,20 @@ func LoadWallet() (*Wallet, error) {
 		return nil, fmt.Errorf("InitStorage: %v", err)
 	}
 
-	wallet := &Wallet{db: db}
+	wallet := &Wallet{db: db, WalletUnit: os.Getenv("WALLET_UNIT")}
 	allKeysets := wallet.db.GetKeysets()
 
-	wallet.MintURL = os.Getenv(MINT_URL)
-	if wallet.MintURL == "" {
-		// if no mint specified, default to localhost
+	mintHost := os.Getenv("MINT_HOST")
+	mintPort := os.Getenv("MINT_PORT")
+	if len(mintHost) == 0 || len(mintPort) == 0 {
 		wallet.MintURL = "http://127.0.0.1:3338"
 	}
+
+	u := &url.URL{
+		Scheme: "http",
+		Host:   mintHost + ":" + mintPort,
+	}
+	wallet.MintURL = u.String()
 
 	activeKeysets, err := GetMintActiveKeysets(wallet.MintURL)
 	if err != nil {
@@ -192,7 +196,7 @@ func (w *Wallet) GetBalance() uint64 {
 }
 
 func (w *Wallet) RequestMint(amount uint64) (nut04.PostMintQuoteBolt11Response, error) {
-	mintRequest := nut04.PostMintQuoteBolt11Request{Amount: amount, Unit: "sat"}
+	mintRequest := nut04.PostMintQuoteBolt11Request{Amount: amount, Unit: w.WalletUnit}
 	body, err := json.Marshal(mintRequest)
 	if err != nil {
 		return nut04.PostMintQuoteBolt11Response{}, fmt.Errorf("json.Marshal: %v", err)
@@ -257,7 +261,7 @@ func (w *Wallet) Send(amount uint64) (*cashu.Token, error) {
 		return nil, err
 	}
 
-	token := cashu.NewToken(proofsToSend, w.MintURL, "sat")
+	token := cashu.NewToken(proofsToSend, w.MintURL, w.WalletUnit)
 	return &token, nil
 }
 
@@ -272,7 +276,7 @@ func (w *Wallet) Receive(token cashu.Token) error {
 		}
 	}
 
-	outputs, secrets, rs, err := cashu.CreateBlindedMessages(proofsAmount, w.GetActiveSatKeyset())
+	outputs, secrets, rs, err := cashu.CreateBlindedMessages(proofsAmount, w.GetWalletUnitActiveKeyset())
 	if err != nil {
 		return fmt.Errorf("CreateBlindedMessages: %v", err)
 	}
@@ -295,7 +299,7 @@ func (w *Wallet) Receive(token cashu.Token) error {
 		return fmt.Errorf("error decoding response from mint: %v", err)
 	}
 
-	mintKeyset := w.GetActiveSatKeyset()
+	mintKeyset := w.GetWalletUnitActiveKeyset()
 	proofs, err := w.ConstructProofs(swapResponse.Signatures, secrets, rs, &mintKeyset)
 	if err != nil {
 		return fmt.Errorf("wallet.ConstructProofs: %v", err)
@@ -413,7 +417,7 @@ func (w *Wallet) getProofsForAmount(amount uint64) (cashu.Proofs, error) {
 		}
 	}
 
-	activeSatKeyset := w.GetActiveSatKeyset()
+	activeSatKeyset := w.GetWalletUnitActiveKeyset()
 	// blinded messages for send amount
 	send, secrets, rs, err := cashu.CreateBlindedMessages(amount, activeSatKeyset)
 	if err != nil {
@@ -534,10 +538,32 @@ func (w *Wallet) ConstructProofs(blindedSignatures cashu.BlindedSignatures,
 	return proofs, nil
 }
 
-func (w *Wallet) GetActiveSatKeyset() crypto.Keyset {
+func (w *Wallet) GetWalletUnitActiveKeyset() crypto.Keyset {
+	if w.WalletUnit == "sat" {
+		return w.getActiveSatKeyset()
+	} else if w.WalletUnit == "usd" {
+		return w.getActiveUSDKeyset()
+	} else {
+		// unsupported
+		return crypto.Keyset{}
+	}
+}
+
+func (w *Wallet) getActiveSatKeyset() crypto.Keyset {
 	var activeKeyset crypto.Keyset
 	for _, keyset := range w.ActiveKeysets {
 		if keyset.Unit == "sat" {
+			activeKeyset = keyset
+			break
+		}
+	}
+	return activeKeyset
+}
+
+func (w *Wallet) getActiveUSDKeyset() crypto.Keyset {
+	var activeKeyset crypto.Keyset
+	for _, keyset := range w.ActiveKeysets {
+		if keyset.Unit == "usd" {
 			activeKeyset = keyset
 			break
 		}

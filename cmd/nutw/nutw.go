@@ -11,6 +11,7 @@ import (
 	"github.com/elnosh/gonuts/cashu/nuts/nut05"
 	"github.com/elnosh/gonuts/mint/lightning"
 	"github.com/elnosh/gonuts/wallet"
+	"github.com/joho/godotenv"
 	"github.com/urfave/cli/v2"
 )
 
@@ -18,6 +19,11 @@ var nutw *wallet.Wallet
 
 func SetupWallet(ctx *cli.Context) error {
 	var err error
+	err = godotenv.Load()
+	if err != nil {
+		log.Fatal("error loading .env file")
+	}
+
 	nutw, err = wallet.LoadWallet()
 	if err != nil {
 		printErr(err)
@@ -51,7 +57,7 @@ var balanceCmd = &cli.Command{
 
 func getBalance(ctx *cli.Context) error {
 	balance := nutw.GetBalance()
-	fmt.Printf("%v sats\n", balance)
+	fmt.Printf("%v %v\n", balance, nutw.WalletUnit)
 	return nil
 }
 
@@ -149,12 +155,14 @@ func mintTokens(paymentRequest string) error {
 		return errors.New("invoice not found")
 	}
 
-	invoicePaid := nutw.CheckQuotePaid(invoice.Id)
-	if !invoicePaid {
-		return errors.New("invoice has not been paid")
+	if nutw.WalletUnit == "sat" {
+		invoicePaid := nutw.CheckQuotePaid(invoice.Id)
+		if !invoicePaid {
+			return errors.New("invoice has not been paid")
+		}
 	}
 
-	activeKeyset := nutw.GetActiveSatKeyset()
+	activeKeyset := nutw.GetWalletUnitActiveKeyset()
 	blindedMessages, secrets, rs, err := cashu.CreateBlindedMessages(invoice.Amount, activeKeyset)
 	if err != nil {
 		return fmt.Errorf("error creating blinded messages: %v", err)
